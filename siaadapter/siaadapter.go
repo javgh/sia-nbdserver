@@ -1,4 +1,4 @@
-package control
+package siaadapter
 
 import (
 	"errors"
@@ -16,6 +16,14 @@ type (
 		lastWriteAccess time.Time
 	}
 
+	pageAccess struct {
+		page      page
+		offset    int64
+		length    int
+		sliceLow  int
+		sliceHigh int
+	}
+
 	Cache struct {
 		pageCount     int
 		cacheCount    int
@@ -31,6 +39,10 @@ type (
 		actionType actionType
 		page       page
 	}
+)
+
+const (
+	pageSize = 64 * 1024 * 1024
 )
 
 const (
@@ -180,4 +192,37 @@ func (c *Cache) prepareAccess(page page, isWrite bool, now time.Time) []action {
 
 func isCached(state state) bool {
 	return state == cachedUnchanged || state == cachedChanged || state == cachedUploading
+}
+
+func determinePages(offset int64, length int) []pageAccess {
+	pageAccesses := []pageAccess{}
+
+	slicePos := 0
+	for length > 0 {
+		page := page(offset / pageSize)
+		pageOffset := offset % pageSize
+		remainingPageLength := pageSize - pageOffset
+		accessLength := min(int(remainingPageLength), length)
+
+		pageAccesses = append(pageAccesses, pageAccess{
+			page:      page,
+			offset:    pageOffset,
+			length:    accessLength,
+			sliceLow:  slicePos,
+			sliceHigh: slicePos + accessLength,
+		})
+
+		offset += int64(accessLength)
+		length -= accessLength
+		slicePos += accessLength
+	}
+
+	return pageAccesses
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
