@@ -2,6 +2,7 @@ package siaadapter
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -39,6 +40,8 @@ type (
 		actionType actionType
 		page       page
 	}
+
+	SiaAdapter struct{}
 )
 
 const (
@@ -62,7 +65,7 @@ const (
 	waitAndRetry
 )
 
-func New(pageCount int, hardMaxCached int, softMaxCached int, idleInterval time.Duration) (*Cache, error) {
+func NewCache(pageCount int, hardMaxCached int, softMaxCached int, idleInterval time.Duration) (*Cache, error) {
 	if softMaxCached >= hardMaxCached {
 		return nil, errors.New("soft limit needs to be lower than hard limit")
 	}
@@ -225,4 +228,25 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func New() *SiaAdapter {
+	siaAdapter := SiaAdapter{}
+	return &siaAdapter
+}
+
+func (sa *SiaAdapter) ReadAt(b []byte, offset int64) (int, error) {
+	//fmt.Println("in ReadAt:", len(b), offset)
+	for _, pageAccess := range determinePages(offset, len(b)) {
+		fmt.Printf("%dr ", pageAccess.page)
+	}
+	return len(b), nil
+}
+
+func (sa *SiaAdapter) WriteAt(b []byte, offset int64) (int, error) {
+	//fmt.Println("in WriteAt:", len(b), offset)
+	for _, pageAccess := range determinePages(offset, len(b)) {
+		fmt.Printf("%dw ", pageAccess.page)
+	}
+	return len(b), nil
 }

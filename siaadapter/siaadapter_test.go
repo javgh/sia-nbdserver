@@ -8,12 +8,12 @@ import (
 )
 
 func TestNew(t *testing.T) {
-	_, err := New(1, 1, 1, 30*time.Second)
+	_, err := NewCache(1, 1, 1, 30*time.Second)
 	assert.NotNil(t, err, "expected rejection of invalid parameters")
 }
 
 func TestMaintenanceA(t *testing.T) {
-	cache, err := New(10, 6, 4, 30*time.Second)
+	cache, err := NewCache(10, 6, 4, 30*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestMaintenanceA(t *testing.T) {
 }
 
 func TestMaintenanceB(t *testing.T) {
-	cache, err := New(3, 2, 1, 30*time.Second)
+	cache, err := NewCache(3, 2, 1, 30*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestMaintenanceB(t *testing.T) {
 }
 
 func TestPrepareAccessA(t *testing.T) {
-	cache, err := New(3, 2, 1, 30*time.Second)
+	cache, err := NewCache(3, 2, 1, 30*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestPrepareAccessA(t *testing.T) {
 }
 
 func TestPrepareAccessB(t *testing.T) {
-	cache, err := New(3, 2, 1, 30*time.Second)
+	cache, err := NewCache(3, 2, 1, 30*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
