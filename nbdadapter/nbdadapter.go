@@ -53,7 +53,7 @@ func (sb *SiaBackend) HasFlush(ctx context.Context) bool {
 	return false
 }
 
-func NewSiaBackend(siaReaderWriter SiaReaderWriter) func(
+func NewSiaBackendFactory(siaReaderWriter SiaReaderWriter) func(
 	ctx context.Context, ec *nbd.ExportConfig) (nbd.Backend, error) {
 	return func(ctx context.Context, ec *nbd.ExportConfig) (nbd.Backend, error) {
 		sizeStr := ec.DriverParameters["size"]

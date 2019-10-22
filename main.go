@@ -12,6 +12,7 @@ import (
 func main() {
 	flag.Parse()
 	siaReaderWriter := siaadapter.New()
-	nbd.RegisterBackend("sia", nbdadapter.NewSiaBackend(siaReaderWriter))
+	siaBackendFactory := nbdadapter.NewSiaBackendFactory(siaReaderWriter)
+	nbd.RegisterBackend("sia", siaBackendFactory)
 	nbd.Run(nil)
 }
