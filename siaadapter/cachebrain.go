@@ -171,8 +171,9 @@ func (cb *cacheBrain) prepareAccess(page page, isWrite bool, now time.Time) []ac
 		panic("unknown state")
 	}
 
+	var noTimestamp time.Time
 	cb.pages[page].lastAccess = now
-	if isWrite {
+	if isWrite || cb.pages[page].lastWriteAccess == noTimestamp {
 		cb.pages[page].lastWriteAccess = now
 	}
 

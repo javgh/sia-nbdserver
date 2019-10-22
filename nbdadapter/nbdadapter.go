@@ -17,6 +17,7 @@ type (
 	SiaReaderWriter interface {
 		ReadAt(b []byte, offset int64) (int, error)
 		WriteAt(b []byte, offset int64) (int, error)
+		Close() error
 	}
 )
 
@@ -38,7 +39,7 @@ func (sb *SiaBackend) Flush(ctx context.Context) error {
 }
 
 func (sb *SiaBackend) Close(ctx context.Context) error {
-	return nil
+	return sb.siaReaderWriter.Close()
 }
 
 func (sb *SiaBackend) Geometry(ctx context.Context) (uint64, uint64, uint64, uint64, error) {
@@ -53,7 +54,7 @@ func (sb *SiaBackend) HasFlush(ctx context.Context) bool {
 	return false
 }
 
-func NewSiaBackendFactory(siaReaderWriter SiaReaderWriter) func(
+func NewSiaBackendFactory(getSiaReaderWriter func(size uint64) (SiaReaderWriter, error)) func(
 	ctx context.Context, ec *nbd.ExportConfig) (nbd.Backend, error) {
 	return func(ctx context.Context, ec *nbd.ExportConfig) (nbd.Backend, error) {
 		sizeStr := ec.DriverParameters["size"]
@@ -62,6 +63,11 @@ func NewSiaBackendFactory(siaReaderWriter SiaReaderWriter) func(
 		}
 
 		size, err := strconv.ParseUint(sizeStr, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+
+		siaReaderWriter, err := getSiaReaderWriter(size)
 		if err != nil {
 			return nil, err
 		}

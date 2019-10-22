@@ -11,8 +11,11 @@ import (
 
 func main() {
 	flag.Parse()
-	siaReaderWriter := siaadapter.New()
-	siaBackendFactory := nbdadapter.NewSiaBackendFactory(siaReaderWriter)
+
+	getSiaReaderWriter := func(size uint64) (nbdadapter.SiaReaderWriter, error) {
+		return siaadapter.New(size)
+	}
+	siaBackendFactory := nbdadapter.NewSiaBackendFactory(getSiaReaderWriter)
 	nbd.RegisterBackend("sia", siaBackendFactory)
 	nbd.Run(nil)
 }
