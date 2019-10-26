@@ -92,6 +92,21 @@ func New(size uint64) (*SiaAdapter, error) {
 		Password: siaPassword,
 	}
 
+	uploadedPages, err := getUploadedPages(&httpClient, false)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, page := range uploadedPages {
+		cache.brain.pages[page].state = notCached
+	}
+
+	cachedPages := getCachedPages(int(pageCount))
+	for _, page := range cachedPages {
+		log.Printf("Cache for page %d found - assuming it may contain new data\n", page)
+		cache.brain.pages[page].state = cachedChanged
+	}
+
 	siaAdapter := SiaAdapter{
 		mutex:      &sync.Mutex{},
 		cache:      &cache,
@@ -108,17 +123,31 @@ func New(size uint64) (*SiaAdapter, error) {
 	return &siaAdapter, nil
 }
 
-func (sa *SiaAdapter) ensureFileAccess(page page) error {
+func (sa *SiaAdapter) ensureFileIsOpen(page page) error {
 	if sa.cache.pages[page].file != nil {
 		return nil
 	}
 
 	file, err := os.OpenFile(asCachePath(page), os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	sa.cache.pages[page].file = file
+	return nil
+}
+
+func (sa *SiaAdapter) ensureFileIsClosed(page page) error {
+	if sa.cache.pages[page].file == nil {
+		return nil
+	}
+
+	err := sa.cache.pages[page].file.Close()
+	if err != nil {
+		return err
+	}
+
+	sa.cache.pages[page].file = nil
 	return nil
 }
 
@@ -128,7 +157,7 @@ func (sa *SiaAdapter) handleActions(actions []action) (bool, error) {
 		case zeroCache:
 			log.Printf("Initializing cache for page %d with zeros\n", action.page)
 
-			err := sa.ensureFileAccess(action.page)
+			err := sa.ensureFileIsOpen(action.page)
 			if err != nil {
 				return false, err
 			}
@@ -141,8 +170,13 @@ func (sa *SiaAdapter) handleActions(actions []action) (bool, error) {
 		case deleteCache:
 			log.Printf("Deleting cache for page %d\n", action.page)
 
+			err := sa.ensureFileIsClosed(action.page)
+			if err != nil {
+				return false, err
+			}
+
 			cachePath := asCachePath(action.page)
-			err := os.Remove(cachePath)
+			err = os.Remove(cachePath)
 			if err != nil {
 				return false, err
 			}
@@ -217,27 +251,12 @@ func (sa *SiaAdapter) maintenance() error {
 		return nil
 	}
 
-	renterFiles, err := sa.httpClient.RenterFilesGet(false)
+	uploadedPages, err := getUploadedPages(sa.httpClient, true)
 	if err != nil {
 		return err
 	}
 
-	for _, fileInfo := range renterFiles.Files {
-		if !isRelevantSiaPath(fileInfo.SiaPath.String()) {
-			continue
-		}
-
-		page, err := getPageFromSiaPath(fileInfo.SiaPath.String())
-		if err != nil {
-			return err
-		}
-
-		uploadComplete :=
-			fileInfo.Available && fileInfo.Recoverable && fileInfo.Redundancy >= minimumRedundancy
-		if !uploadComplete {
-			continue
-		}
-
+	for _, page := range uploadedPages {
 		if sa.cache.brain.pages[page].state == cachedUploading {
 			log.Printf("Upload complete for page %d\n", page)
 			sa.cache.brain.pages[page].state = cachedUnchanged
@@ -269,7 +288,7 @@ func (sa *SiaAdapter) ReadAt(b []byte, offset int64) (int, error) {
 			}
 		}
 
-		err := sa.ensureFileAccess(pageAccess.page)
+		err := sa.ensureFileIsOpen(pageAccess.page)
 		if err != nil {
 			return n, err
 		}
@@ -306,7 +325,7 @@ func (sa *SiaAdapter) WriteAt(b []byte, offset int64) (int, error) {
 			}
 		}
 
-		err := sa.ensureFileAccess(pageAccess.page)
+		err := sa.ensureFileIsOpen(pageAccess.page)
 		if err != nil {
 			return n, err
 		}
@@ -326,6 +345,53 @@ func (sa *SiaAdapter) Close() error {
 	defer sa.mutex.Unlock()
 
 	return nil
+}
+
+func getUploadedPages(httpClient *client.Client, checkRedundancy bool) ([]page, error) {
+	pages := []page{}
+
+	renterFiles, err := httpClient.RenterFilesGet(false)
+	if err != nil {
+		return pages, err
+	}
+
+	for _, fileInfo := range renterFiles.Files {
+		if !isRelevantSiaPath(fileInfo.SiaPath.String()) {
+			continue
+		}
+
+		page, err := getPageFromSiaPath(fileInfo.SiaPath.String())
+		if err != nil {
+			return pages, err
+		}
+
+		uploadComplete := fileInfo.Available && fileInfo.Recoverable &&
+			(!checkRedundancy || fileInfo.Redundancy >= minimumRedundancy)
+		if uploadComplete {
+			pages = append(pages, page)
+		}
+	}
+
+	return pages, nil
+}
+
+func getCachedPages(pageCount int) []page {
+	pages := []page{}
+
+	for i := 0; i < pageCount; i++ {
+		cachePath := asCachePath(page(i))
+
+		if fileCanBeStated(cachePath) {
+			pages = append(pages, page(i))
+		}
+	}
+
+	return pages
+}
+
+func fileCanBeStated(name string) bool {
+	_, err := os.Stat(name)
+	return err == nil
 }
 
 func asSiaPath(page page) string {
