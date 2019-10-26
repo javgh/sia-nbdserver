@@ -173,8 +173,8 @@ func (sa *SiaAdapter) handleActions(actions []action) (bool, error) {
 			if err != nil {
 				return false, err
 			}
-		case cancelUpload:
-			log.Printf("Canceling upload for page %d\n", action.page)
+		case postponeUpload:
+			log.Printf("Postponing upload for page %d\n", action.page)
 
 			siaPath, err := modules.NewSiaPath(asSiaPath(action.page))
 			if err != nil {

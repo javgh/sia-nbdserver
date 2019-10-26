@@ -2,6 +2,7 @@ package siaadapter
 
 import (
 	"errors"
+	"sort"
 	"time"
 )
 
@@ -11,9 +12,13 @@ type (
 	page int
 
 	pageDetails struct {
-		state           state
-		lastAccess      time.Time
-		lastWriteAccess time.Time
+		state      state
+		lastAccess time.Time
+	}
+
+	lastAccessDetails struct {
+		lastAccess time.Time
+		page       page
 	}
 
 	cacheBrain struct {
@@ -34,6 +39,10 @@ type (
 )
 
 const (
+	maxConcurrentUploads = 3
+)
+
+const (
 	zero state = iota
 	notCached
 	cachedUnchanged
@@ -46,7 +55,7 @@ const (
 	deleteCache
 	download
 	startUpload
-	cancelUpload
+	postponeUpload
 	waitAndRetry
 )
 
@@ -69,54 +78,54 @@ func newCacheBrain(pageCount int, hardMaxCached int, softMaxCached int,
 
 func (cb *cacheBrain) maintenance(now time.Time) []action {
 	actions := []action{}
-	hasOldestCachedPage := false
-	var oldestCachedPage page
-	var oldestAccess time.Time
+	accesses := []lastAccessDetails{}
 
+	uploadingCount := 0
 	for i := 0; i < cb.pageCount; i++ {
 		if !isCached(cb.pages[i].state) {
 			continue
 		}
 
-		if !hasOldestCachedPage || oldestAccess.After(cb.pages[i].lastAccess) {
-			hasOldestCachedPage = true
-			oldestCachedPage = page(i)
-			oldestAccess = cb.pages[i].lastAccess
+		if cb.pages[i].state == cachedUploading {
+			uploadingCount += 1
 		}
 
-		if cb.pages[i].state != cachedChanged {
-			continue
-		}
-
-		if now.After(cb.pages[i].lastWriteAccess.Add(cb.idleInterval)) {
-			actions = append(actions, action{
-				actionType: startUpload,
-				page:       page(i),
-			})
-			cb.pages[i].state = cachedUploading
-		}
+		accesses = append(accesses, lastAccessDetails{
+			lastAccess: cb.pages[i].lastAccess,
+			page:       page(i),
+		})
 	}
 
-	// Return here if we already have something to do
-	// or if we haven't reached our soft limit yet.
-	if len(actions) > 0 || cb.cacheCount < cb.softMaxCached {
-		return actions
-	}
+	// sort cached pages by oldest to newest access
+	sort.Slice(accesses, func(i, j int) bool {
+		return accesses[i].lastAccess.Before(accesses[j].lastAccess)
+	})
 
-	switch cb.pages[oldestCachedPage].state {
-	case cachedUnchanged:
-		actions = append(actions, action{
-			actionType: deleteCache,
-			page:       oldestCachedPage,
-		})
-		cb.pages[oldestCachedPage].state = notCached
-		cb.cacheCount -= 1
-	case cachedChanged:
-		actions = append(actions, action{
-			actionType: startUpload,
-			page:       oldestCachedPage,
-		})
-		cb.pages[oldestCachedPage].state = cachedUploading
+	for _, access := range accesses {
+		softLimitReached := cb.cacheCount >= cb.softMaxCached
+		isIdle := now.After(access.lastAccess.Add(cb.idleInterval))
+		hasRoomForUpload := uploadingCount < maxConcurrentUploads
+
+		switch cb.pages[access.page].state {
+		case cachedUnchanged:
+			if softLimitReached {
+				actions = append(actions, action{
+					actionType: deleteCache,
+					page:       access.page,
+				})
+				cb.pages[access.page].state = notCached
+				cb.cacheCount -= 1
+			}
+		case cachedChanged:
+			if hasRoomForUpload && (softLimitReached || isIdle) {
+				actions = append(actions, action{
+					actionType: startUpload,
+					page:       access.page,
+				})
+				cb.pages[access.page].state = cachedUploading
+				uploadingCount += 1
+			}
+		}
 	}
 
 	return actions
@@ -126,8 +135,7 @@ func (cb *cacheBrain) prepareAccess(page page, isWrite bool, now time.Time) []ac
 	actions := []action{}
 
 	if !isCached(cb.pages[page].state) && cb.cacheCount >= cb.hardMaxCached {
-		// need to free up some space first
-		actions = cb.maintenance(now)
+		// wait for maintenance to free up some space first
 		actions = append(actions, action{
 			actionType: waitAndRetry,
 		})
@@ -162,7 +170,7 @@ func (cb *cacheBrain) prepareAccess(page page, isWrite bool, now time.Time) []ac
 	case cachedUploading:
 		if isWrite {
 			actions = append(actions, action{
-				actionType: cancelUpload,
+				actionType: postponeUpload,
 				page:       page,
 			})
 			cb.pages[page].state = cachedChanged
@@ -171,12 +179,7 @@ func (cb *cacheBrain) prepareAccess(page page, isWrite bool, now time.Time) []ac
 		panic("unknown state")
 	}
 
-	var noTimestamp time.Time
 	cb.pages[page].lastAccess = now
-	if isWrite || cb.pages[page].lastWriteAccess == noTimestamp {
-		cb.pages[page].lastWriteAccess = now
-	}
-
 	return actions
 }
 
