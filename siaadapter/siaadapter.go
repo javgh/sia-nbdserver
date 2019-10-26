@@ -4,16 +4,21 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/user"
-	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"gitlab.com/NebulousLabs/Sia/modules"
+	"gitlab.com/NebulousLabs/Sia/node/api/client"
+
+	"github.com/javgh/sia-nbdserver/config"
 )
 
 type (
 	SiaAdapter struct {
-		mutex *sync.Mutex
-		cache *cache
+		mutex      *sync.Mutex
+		cache      *cache
+		httpClient *client.Client
 	}
 
 	pageAccess struct {
@@ -37,14 +42,23 @@ type (
 
 const (
 	pageSize             = 64 * 1024 * 1024
-	defaultHardMaxCached = 32
-	defaultSoftMaxCached = 16
+	defaultHardMaxCached = 32 //5
+	defaultSoftMaxCached = 16 //3
 	defaultIdleInterval  = 30 * time.Second
 	waitInterval         = 5 * time.Second
+	defaultDataPieces    = 10
+	defaultParityPieces  = 20
+	minimumRedundancy    = 2.5
+)
+
+var (
+	siaDaemonAddress = "localhost:9980"
+	siaPasswordFile  = config.PrependHomeDirectory(".sia/apipassword")
+	siaPathPrefix    = "nbd"
 )
 
 func New(size uint64) (*SiaAdapter, error) {
-	dataDirectory := prependDataDirectory("")
+	dataDirectory := config.PrependDataDirectory("")
 	log.Printf("Storing cache in %s", dataDirectory)
 	err := os.MkdirAll(dataDirectory, 0700)
 	if err != nil {
@@ -68,10 +82,29 @@ func New(size uint64) (*SiaAdapter, error) {
 		pages:     make([]pageIODetails, pageCount),
 	}
 
-	siaAdapter := SiaAdapter{
-		mutex: &sync.Mutex{},
-		cache: &cache,
+	siaPassword, err := config.ReadPasswordFile(siaPasswordFile)
+	if err != nil {
+		return nil, err
 	}
+
+	httpClient := client.Client{
+		Address:  siaDaemonAddress,
+		Password: siaPassword,
+	}
+
+	siaAdapter := SiaAdapter{
+		mutex:      &sync.Mutex{},
+		cache:      &cache,
+		httpClient: &httpClient,
+	}
+
+	go func() {
+		for {
+			time.Sleep(waitInterval)
+			_ = siaAdapter.maintenance()
+		}
+	}()
+
 	return &siaAdapter, nil
 }
 
@@ -80,8 +113,7 @@ func (sa *SiaAdapter) ensureFileAccess(page page) error {
 		return nil
 	}
 
-	name := prependDataDirectory(fmt.Sprintf("page%d", page))
-	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE, 0600)
+	file, err := os.OpenFile(asCachePath(page), os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
 		return nil
 	}
@@ -106,14 +138,113 @@ func (sa *SiaAdapter) handleActions(actions []action) (bool, error) {
 			if err != nil {
 				return false, err
 			}
+		case deleteCache:
+			log.Printf("Deleting cache for page %d\n", action.page)
+
+			cachePath := asCachePath(action.page)
+			err := os.Remove(cachePath)
+			if err != nil {
+				return false, err
+			}
+		case download:
+			log.Printf("Downloading page %d\n", action.page)
+
+			siaPath, err := modules.NewSiaPath(asSiaPath(action.page))
+			if err != nil {
+				return false, err
+			}
+
+			cachePath := asCachePath(action.page)
+			_, err = sa.httpClient.RenterDownloadFullGet(siaPath, cachePath, false)
+			if err != nil {
+				return false, err
+			}
+		case startUpload:
+			log.Printf("Uploading page %d\n", action.page)
+
+			siaPath, err := modules.NewSiaPath(asSiaPath(action.page))
+			if err != nil {
+				return false, err
+			}
+
+			cachePath := asCachePath(action.page)
+			err = sa.httpClient.RenterUploadForcePost(
+				cachePath, siaPath, defaultDataPieces, defaultParityPieces, true)
+			if err != nil {
+				return false, err
+			}
+		case cancelUpload:
+			log.Printf("Canceling upload for page %d\n", action.page)
+
+			siaPath, err := modules.NewSiaPath(asSiaPath(action.page))
+			if err != nil {
+				return false, err
+			}
+
+			err = sa.httpClient.RenterDeletePost(siaPath)
+			if err != nil {
+				return false, err
+			}
 		case waitAndRetry:
 			return true, nil
 		default:
-			log.Printf("unimplemented action %d on page %d\n", action.actionType, action.page)
+			panic("unknown action")
 		}
 	}
 
 	return false, nil
+}
+
+func (sa *SiaAdapter) maintenance() error {
+	sa.mutex.Lock()
+	defer sa.mutex.Unlock()
+
+	actions := sa.cache.brain.maintenance(time.Now())
+	_, err := sa.handleActions(actions)
+	if err != nil {
+		return err
+	}
+
+	anyUploading := false
+	for i := 0; i < sa.cache.brain.pageCount; i++ {
+		if sa.cache.brain.pages[i].state == cachedUploading {
+			anyUploading = true
+			break
+		}
+	}
+
+	if !anyUploading {
+		return nil
+	}
+
+	renterFiles, err := sa.httpClient.RenterFilesGet(false)
+	if err != nil {
+		return err
+	}
+
+	for _, fileInfo := range renterFiles.Files {
+		if !isRelevantSiaPath(fileInfo.SiaPath.String()) {
+			continue
+		}
+
+		page, err := getPageFromSiaPath(fileInfo.SiaPath.String())
+		if err != nil {
+			return err
+		}
+
+		uploadComplete :=
+			fileInfo.Available && fileInfo.Recoverable && fileInfo.Redundancy >= minimumRedundancy
+		if !uploadComplete {
+			continue
+		}
+
+		if sa.cache.brain.pages[page].state == cachedUploading {
+			log.Printf("Upload complete for page %d\n", page)
+			sa.cache.brain.pages[page].state = cachedUnchanged
+		}
+	}
+
+	return nil
 }
 
 func (sa *SiaAdapter) ReadAt(b []byte, offset int64) (int, error) {
@@ -197,6 +328,30 @@ func (sa *SiaAdapter) Close() error {
 	return nil
 }
 
+func asSiaPath(page page) string {
+	return fmt.Sprintf("%s/page%d", siaPathPrefix, page)
+}
+
+func asCachePath(page page) string {
+	return config.PrependDataDirectory(fmt.Sprintf("page%d", page))
+}
+
+func isRelevantSiaPath(siaPath string) bool {
+	return strings.HasPrefix(siaPath, fmt.Sprintf("%s/page", siaPathPrefix))
+}
+
+func getPageFromSiaPath(siaPath string) (page, error) {
+	var page page
+
+	format := fmt.Sprintf("%s/page%%d", siaPathPrefix)
+	_, err := fmt.Sscanf(siaPath, format, &page)
+	if err != nil {
+		return 0, err
+	}
+
+	return page, nil
+}
+
 func determinePages(offset int64, length int) []pageAccess {
 	pageAccesses := []pageAccess{}
 
@@ -228,17 +383,4 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func prependDataDirectory(path string) string {
-	if os.Getenv("XDG_DATA_HOME") != "" {
-		return filepath.Join(os.Getenv("XDG_DATA_HOME"), "sia-nbdserver", path)
-	}
-
-	currentUser, err := user.Current()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return filepath.Join(currentUser.HomeDir, ".local/share/sia-nbdserver", path)
 }

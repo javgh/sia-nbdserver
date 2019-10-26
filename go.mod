@@ -9,5 +9,6 @@ require (
 	github.com/sevlyar/go-daemon v0.1.5 // indirect
 	github.com/stretchr/testify v1.4.0
 	github.com/traetox/goaio v0.0.0-20171005222435-46641abceb17 // indirect
+	gitlab.com/NebulousLabs/Sia v1.4.1
 	golang.org/x/net v0.0.0-20191021144547-ec77196f6094 // indirect
 )
