@@ -59,7 +59,7 @@ var (
 
 func New(size uint64) (*SiaAdapter, error) {
 	dataDirectory := config.PrependDataDirectory("")
-	log.Printf("Storing cache in %s", dataDirectory)
+	log.Printf("Storing cache in %s\n", dataDirectory)
 	err := os.MkdirAll(dataDirectory, 0700)
 	if err != nil {
 		return nil, err
@@ -343,6 +343,23 @@ func (sa *SiaAdapter) WriteAt(b []byte, offset int64) (int, error) {
 func (sa *SiaAdapter) Close() error {
 	sa.mutex.Lock()
 	defer sa.mutex.Unlock()
+
+	log.Printf("Shutting down\n")
+	for {
+		actions := sa.cache.brain.prepareShutdown()
+		retry, err := sa.handleActions(actions)
+		if err != nil {
+			return err
+		}
+
+		if !retry {
+			break
+		} else {
+			sa.mutex.Unlock()
+			time.Sleep(waitInterval)
+			sa.mutex.Lock()
+		}
+	}
 
 	return nil
 }

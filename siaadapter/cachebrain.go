@@ -183,6 +183,36 @@ func (cb *cacheBrain) prepareAccess(page page, isWrite bool, now time.Time) []ac
 	return actions
 }
 
+func (cb *cacheBrain) prepareShutdown() []action {
+	actions := []action{}
+
+	for i := 0; i < cb.pageCount; i++ {
+		switch cb.pages[i].state {
+		case cachedUnchanged:
+			actions = append(actions, action{
+				actionType: deleteCache,
+				page:       page(i),
+			})
+			cb.pages[i].state = notCached
+			cb.cacheCount -= 1
+		case cachedChanged:
+			actions = append(actions, action{
+				actionType: startUpload,
+				page:       page(i),
+			})
+			cb.pages[i].state = cachedUploading
+		}
+	}
+
+	if cb.cacheCount > 0 {
+		actions = append(actions, action{
+			actionType: waitAndRetry,
+		})
+	}
+
+	return actions
+}
+
 func isCached(state state) bool {
 	return state == cachedUnchanged || state == cachedChanged || state == cachedUploading
 }

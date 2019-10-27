@@ -169,3 +169,34 @@ func TestPrepareAccessB(t *testing.T) {
 	assert.Equal(t, cachedChanged, cacheBrain.pages[2].state)
 	assert.Equal(t, 1, cacheBrain.cacheCount)
 }
+
+func TestPrepareShutdown(t *testing.T) {
+	cacheBrain, err := newCacheBrain(10, 6, 4, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	actions := cacheBrain.prepareShutdown()
+	assert.Empty(t, actions, "empty cache should shutdown right away")
+
+	now := time.Now()
+	cacheBrain.pages[2].state = cachedUnchanged
+	cacheBrain.pages[2].lastAccess = now
+	cacheBrain.cacheCount = 1
+
+	actions = cacheBrain.prepareShutdown()
+	assert.Equal(t, 1, len(actions))
+	assert.Equal(t, deleteCache, actions[0].actionType)
+	assert.Equal(t, notCached, cacheBrain.pages[2].state)
+	assert.Equal(t, 0, cacheBrain.cacheCount)
+
+	cacheBrain.pages[3].state = cachedChanged
+	cacheBrain.pages[3].lastAccess = now
+	cacheBrain.cacheCount = 1
+
+	actions = cacheBrain.prepareShutdown()
+	assert.Equal(t, 2, len(actions))
+	assert.Equal(t, startUpload, actions[0].actionType)
+	assert.Equal(t, cachedUploading, cacheBrain.pages[3].state)
+	assert.Equal(t, waitAndRetry, actions[1].actionType)
+}
