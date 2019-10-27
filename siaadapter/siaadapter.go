@@ -3,6 +3,7 @@ package siaadapter
 import (
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -41,14 +42,15 @@ type (
 )
 
 const (
-	pageSize             = 64 * 1024 * 1024
-	defaultHardMaxCached = 32 //5
-	defaultSoftMaxCached = 16 //3
-	defaultIdleInterval  = 30 * time.Second
-	waitInterval         = 5 * time.Second
-	defaultDataPieces    = 10
-	defaultParityPieces  = 20
-	minimumRedundancy    = 2.5
+	pageSize              = 64 * 1024 * 1024
+	defaultHardMaxCached  = 48
+	defaultSoftMaxCached  = 32
+	defaultIdleInterval   = 30 * time.Second
+	waitInterval          = 5 * time.Second
+	defaultDataPieces     = 10
+	defaultParityPieces   = 20
+	minimumRedundancy     = 2.5
+	writeThrottleInterval = 5 * time.Millisecond
 )
 
 var (
@@ -306,6 +308,16 @@ func (sa *SiaAdapter) ReadAt(b []byte, offset int64) (int, error) {
 func (sa *SiaAdapter) WriteAt(b []byte, offset int64) (int, error) {
 	sa.mutex.Lock()
 	defer sa.mutex.Unlock()
+
+	writeThrottleLevel := sa.cache.brain.cacheCount - (sa.cache.brain.softMaxCached + maxConcurrentUploads)
+	if writeThrottleLevel >= 0 {
+		writeThrottleMultiplier := int64(math.Pow(2, float64(writeThrottleLevel)))
+		writeThrottleDuration := time.Duration(writeThrottleMultiplier * int64(writeThrottleInterval))
+
+		sa.mutex.Unlock()
+		time.Sleep(writeThrottleDuration)
+		sa.mutex.Lock()
+	}
 
 	n := 0
 	for _, pageAccess := range determinePages(offset, len(b)) {
