@@ -101,7 +101,7 @@ func (cb *cacheBrain) maintenance(now time.Time) []action {
 		return accesses[i].lastAccess.Before(accesses[j].lastAccess)
 	})
 
-	for _, access := range accesses {
+	for i, access := range accesses {
 		softLimitReached := cb.cacheCount >= cb.softMaxCached
 		isIdle := now.After(access.lastAccess.Add(cb.idleInterval))
 		hasRoomForUpload := uploadingCount < maxConcurrentUploads
@@ -125,6 +125,11 @@ func (cb *cacheBrain) maintenance(now time.Time) []action {
 				cb.pages[access.page].state = cachedUploading
 				uploadingCount += 1
 			}
+		}
+
+		// limit maintenance activity to oldest part of the cache
+		if i >= 2*maxConcurrentUploads {
+			break
 		}
 	}
 

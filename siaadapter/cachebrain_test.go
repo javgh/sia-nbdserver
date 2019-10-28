@@ -100,6 +100,55 @@ func TestMaintenanceC(t *testing.T) {
 	assert.Empty(t, actions, "should not trigger uploads again")
 }
 
+func TestMaintenanceD(t *testing.T) {
+	cacheBrain, err := newCacheBrain(10, 6, 4, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	cacheBrain.pages[2].lastAccess = now
+	cacheBrain.pages[2].state = cachedUnchanged
+
+	cacheBrain.pages[1].lastAccess = now.Add(time.Second)
+	cacheBrain.pages[1].state = cachedUnchanged
+
+	cacheBrain.pages[3].lastAccess = now.Add(2 * time.Second)
+	cacheBrain.pages[3].state = cachedUnchanged
+
+	cacheBrain.pages[4].lastAccess = now.Add(3 * time.Second)
+	cacheBrain.pages[4].state = cachedUnchanged
+
+	cacheBrain.cacheCount = 4
+
+	actions := cacheBrain.maintenance(now.Add(4 * time.Second))
+	assert.Equal(t, 1, len(actions), "expected action when soft limit is hit")
+	assert.Equal(t, deleteCache, actions[0].actionType, "expected delete action")
+	assert.Equal(t, page(2), actions[0].page, "expected oldest page to be deleted first")
+}
+
+func TestMaintenanceE(t *testing.T) {
+	cacheBrain, err := newCacheBrain(30, 20, 10, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+
+	for i := 0; i < 9; i++ {
+		cacheBrain.pages[i].lastAccess = now
+		cacheBrain.pages[i].state = cachedUploading
+	}
+
+	cacheBrain.pages[9].lastAccess = now.Add(time.Second)
+	cacheBrain.pages[9].state = cachedUnchanged
+
+	cacheBrain.cacheCount = 10
+
+	actions := cacheBrain.maintenance(now.Add(2 * time.Second))
+	assert.Equal(t, 0, len(actions), "expected no action if many older pages are uploading")
+}
+
 func TestPrepareAccessA(t *testing.T) {
 	cacheBrain, err := newCacheBrain(3, 2, 1, 30*time.Second)
 	if err != nil {
