@@ -51,6 +51,7 @@ const (
 	defaultParityPieces   = 20
 	minimumRedundancy     = 2.5
 	writeThrottleInterval = 5 * time.Millisecond
+	useCachedRenterInfo   = true
 )
 
 var (
@@ -379,7 +380,7 @@ func (sa *SiaAdapter) Close() error {
 func getUploadedPages(httpClient *client.Client, checkRedundancy bool) ([]page, error) {
 	pages := []page{}
 
-	renterFiles, err := httpClient.RenterFilesGet(false)
+	renterFiles, err := httpClient.RenterFilesGet(useCachedRenterInfo)
 	if err != nil {
 		return pages, err
 	}
