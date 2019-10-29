@@ -43,8 +43,8 @@ type (
 
 const (
 	pageSize              = 64 * 1024 * 1024
-	defaultHardMaxCached  = 48
-	defaultSoftMaxCached  = 32
+	defaultHardMaxCached  = 192
+	defaultSoftMaxCached  = 176
 	defaultIdleInterval   = 30 * time.Second
 	waitInterval          = 5 * time.Second
 	defaultDataPieces     = 10
