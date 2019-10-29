@@ -158,7 +158,7 @@ func (sa *SiaAdapter) handleActions(actions []action) (bool, error) {
 	for _, action := range actions {
 		switch action.actionType {
 		case zeroCache:
-			log.Printf("Initializing cache for page %d with zeros\n", action.page)
+			log.Printf("Initializing cache for page %d with zeroes\n", action.page)
 
 			err := sa.ensureFileIsOpen(action.page)
 			if err != nil {
