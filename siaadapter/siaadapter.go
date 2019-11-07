@@ -2,6 +2,7 @@ package siaadapter
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -38,6 +39,12 @@ type (
 		brain     *cacheBrain
 		pageCount int
 		pages     []pageIODetails
+	}
+
+	uploadQueue struct {
+		httpClient  *client.Client
+		isUploading map[page]bool
+		uploads     int
 	}
 )
 
@@ -375,6 +382,180 @@ func (sa *SiaAdapter) Close() error {
 	}
 
 	return nil
+}
+
+func newUploadQueue(httpClient *client.Client) *uploadQueue {
+	uploadQueue := uploadQueue{
+		httpClient:  httpClient,
+		isUploading: make(map[page]bool),
+		uploads:     0,
+	}
+	return &uploadQueue
+}
+
+func (uq *uploadQueue) upload(page page) error {
+	cachePath := asCachePath(page)
+
+	siaPath, err := modules.NewSiaPath(asSiaPath(page))
+	if err != nil {
+		return err
+	}
+
+	log.Printf("Uploading page %d\n", page)
+	err = uq.httpClient.RenterUploadForcePost(
+		cachePath, siaPath, defaultDataPieces, defaultParityPieces, true)
+	if err != nil {
+		return err
+	}
+
+	uq.isUploading[page] = true
+	uq.uploads += 1
+
+	return nil
+}
+
+func (uq *uploadQueue) monitorUploads() (int, error) {
+	uploadedPages, err := getUploadedPages(uq.httpClient, true)
+	if err != nil {
+		return uq.uploads, err
+	}
+
+	for _, uploadedPage := range uploadedPages {
+		if uq.isUploading[uploadedPage] {
+			log.Printf("Upload complete for page %d\n", uploadedPage)
+			uq.isUploading[uploadedPage] = false
+			uq.uploads -= 1
+
+			err = os.Remove(asCachePath(uploadedPage))
+			if err != nil {
+				return uq.uploads, err
+			}
+		}
+	}
+
+	return uq.uploads, nil
+}
+
+func InitFromFile(name string) error {
+	f, err := os.Open(name)
+	if err != nil {
+		return err
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+
+	if info.Size()%int64(pageSize) != 0 {
+		return fmt.Errorf("file size needs to be a multiple of %d bytes", pageSize)
+	}
+
+	siaPassword, err := config.ReadPasswordFile(siaPasswordFile)
+	if err != nil {
+		return err
+	}
+
+	httpClient := client.Client{
+		Address:  siaDaemonAddress,
+		Password: siaPassword,
+	}
+
+	siaPath, err := modules.NewSiaPath(siaPathPrefix)
+	if err != nil {
+		return err
+	}
+
+	_, err = httpClient.RenterGetDir(siaPath)
+	if err == nil {
+		return fmt.Errorf("%s seems to already exist - will not overwrite", siaPathPrefix)
+	}
+
+	buf := make([]byte, pageSize)
+	page := page(0)
+	uploadQueue := newUploadQueue(&httpClient)
+	for {
+		_, err = io.ReadFull(f, buf)
+
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return err
+		}
+
+		if isZero(buf) {
+			page += 1
+			continue
+		}
+
+		cachePath := asCachePath(page)
+		pageF, err := os.OpenFile(cachePath, os.O_RDWR|os.O_CREATE, 0600)
+		if err != nil {
+			return err
+		}
+
+		_, err = pageF.Write(buf)
+		if err != nil {
+			return err
+		}
+
+		err = pageF.Close()
+		if err != nil {
+			return err
+		}
+
+		for {
+			uploads, err := uploadQueue.monitorUploads()
+			if err != nil {
+				return err
+			}
+
+			if uploads < maxConcurrentUploads {
+				break
+			}
+
+			time.Sleep(waitInterval)
+		}
+
+		err = uploadQueue.upload(page)
+		if err != nil {
+			return err
+		}
+
+		page += 1
+	}
+
+	for {
+		uploads, err := uploadQueue.monitorUploads()
+		if err != nil {
+			return err
+		}
+
+		if uploads == 0 {
+			break
+		}
+
+		time.Sleep(waitInterval)
+	}
+
+	err = f.Close()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func isZero(buf []byte) bool {
+	for i := 0; i < len(buf); i++ {
+		if buf[i] != 0 {
+			return false
+		}
+	}
+
+	return true
 }
 
 func getUploadedPages(httpClient *client.Client, checkRedundancy bool) ([]page, error) {
