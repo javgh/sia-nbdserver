@@ -3,13 +3,17 @@ package nbd
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
 )
 
 type (
+	Backend interface {
+		ReadAt(buf []byte, offset int64) (int, error)
+		WriteAt(buf []byte, offset int64) (int, error)
+	}
+
 	nbdNewStyleHeader struct {
 		NbdMagic          uint64
 		NbdOptionMagic    uint64
@@ -81,13 +85,13 @@ const (
 	nbdCmdWrite = 1
 	nbdCmdDisc  = 2
 
-	maxOptionLength = 65536
+	maxOptionLength  = 65536
+	maxRequestLength = 268435456
 
 	exportName = "sia"
-	exportSize = 1099511627776
 )
 
-func handle(conn net.Conn) error {
+func handle(conn net.Conn, exportSize uint64, backend Backend) error {
 	newStyleHeader := nbdNewStyleHeader{
 		NbdMagic:          nbdMagic,
 		NbdOptionMagic:    nbdOptionMagic,
@@ -243,6 +247,7 @@ func handle(conn net.Conn) error {
 		}
 	}
 
+	buf := make([]byte, 0)
 	transmissionOngoing := true
 	for transmissionOngoing {
 		var request nbdRequest
@@ -255,10 +260,25 @@ func handle(conn net.Conn) error {
 			return errors.New("did not receive request magic")
 		}
 
-		b := make([]byte, request.NbdLength)
+		if request.NbdLength > maxRequestLength {
+			return errors.New("request is too large")
+		}
+
+		if int(request.NbdLength) > cap(buf) {
+			// increase buffer capacity as needed
+			buf = make([]byte, request.NbdLength)
+		}
+		buf = buf[0:request.NbdLength]
+
 		switch request.NbdCommandType {
 		case nbdCmdRead:
-			fmt.Println("read", request.NbdLength)
+			_, err := backend.ReadAt(buf, int64(request.NbdOffset))
+			if err != nil {
+				// Taking some liberty with error handling
+				// and just disconnecting here.
+				return err
+			}
+
 			reply := nbdSimpleReply{
 				NbdSimpleReplyMagic: nbdSimpleReplyMagic,
 				NbdError:            0,
@@ -269,14 +289,20 @@ func handle(conn net.Conn) error {
 				return err
 			}
 
-			err = binary.Write(conn, binary.BigEndian, b)
+			err = binary.Write(conn, binary.BigEndian, buf)
 			if err != nil {
 				return err
 			}
 		case nbdCmdWrite:
-			fmt.Println("write", request.NbdLength)
-			_, err = io.ReadFull(conn, b)
+			_, err = io.ReadFull(conn, buf)
 			if err != nil {
+				return err
+			}
+
+			_, err := backend.WriteAt(buf, int64(request.NbdOffset))
+			if err != nil {
+				// Taking some liberty with error handling
+				// and just disconnecting here.
 				return err
 			}
 
@@ -297,7 +323,7 @@ func handle(conn net.Conn) error {
 	return nil
 }
 
-func Playground() {
+func Playground(backend Backend) {
 	ln, err := net.Listen("unix", "/tmp/playground")
 	if err != nil {
 		log.Fatal(err)
@@ -308,7 +334,7 @@ func Playground() {
 		log.Fatal(err)
 	}
 
-	err = handle(conn)
+	err = handle(conn, 1099511627776, backend)
 	if err != nil {
 		log.Fatal(err)
 	}
