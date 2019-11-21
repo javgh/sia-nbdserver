@@ -108,6 +108,7 @@ func NewBackend(size uint64) (*Backend, error) {
 	for _, page := range cachedPages {
 		log.Printf("Cache for page %d found - assuming it may contain new data\n", page)
 		cache.brain.pages[page].state = cachedChanged
+		cache.brain.cacheCount += 1
 	}
 
 	backend := Backend{
