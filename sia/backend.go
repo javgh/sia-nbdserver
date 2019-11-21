@@ -1,4 +1,4 @@
-package siaadapter
+package sia
 
 import (
 	"fmt"
@@ -17,7 +17,7 @@ import (
 )
 
 type (
-	SiaAdapter struct {
+	Backend struct {
 		mutex      *sync.Mutex
 		cache      *cache
 		httpClient *client.Client
@@ -67,7 +67,7 @@ var (
 	siaPathPrefix    = "nbd"
 )
 
-func New(size uint64) (*SiaAdapter, error) {
+func NewBackend(size uint64) (*Backend, error) {
 	dataDirectory := config.PrependDataDirectory("")
 	log.Printf("Storing cache in %s\n", dataDirectory)
 	err := os.MkdirAll(dataDirectory, 0700)
@@ -117,7 +117,7 @@ func New(size uint64) (*SiaAdapter, error) {
 		cache.brain.pages[page].state = cachedChanged
 	}
 
-	siaAdapter := SiaAdapter{
+	backend := Backend{
 		mutex:      &sync.Mutex{},
 		cache:      &cache,
 		httpClient: &httpClient,
@@ -126,15 +126,15 @@ func New(size uint64) (*SiaAdapter, error) {
 	go func() {
 		for {
 			time.Sleep(waitInterval)
-			_ = siaAdapter.maintenance()
+			_ = backend.maintenance()
 		}
 	}()
 
-	return &siaAdapter, nil
+	return &backend, nil
 }
 
-func (sa *SiaAdapter) ensureFileIsOpen(page page) error {
-	if sa.cache.pages[page].file != nil {
+func (b *Backend) ensureFileIsOpen(page page) error {
+	if b.cache.pages[page].file != nil {
 		return nil
 	}
 
@@ -143,44 +143,44 @@ func (sa *SiaAdapter) ensureFileIsOpen(page page) error {
 		return err
 	}
 
-	sa.cache.pages[page].file = file
+	b.cache.pages[page].file = file
 	return nil
 }
 
-func (sa *SiaAdapter) ensureFileIsClosed(page page) error {
-	if sa.cache.pages[page].file == nil {
+func (b *Backend) ensureFileIsClosed(page page) error {
+	if b.cache.pages[page].file == nil {
 		return nil
 	}
 
-	err := sa.cache.pages[page].file.Close()
+	err := b.cache.pages[page].file.Close()
 	if err != nil {
 		return err
 	}
 
-	sa.cache.pages[page].file = nil
+	b.cache.pages[page].file = nil
 	return nil
 }
 
-func (sa *SiaAdapter) handleActions(actions []action) (bool, error) {
+func (b *Backend) handleActions(actions []action) (bool, error) {
 	for _, action := range actions {
 		switch action.actionType {
 		case zeroCache:
 			log.Printf("Initializing cache for page %d with zeroes\n", action.page)
 
-			err := sa.ensureFileIsOpen(action.page)
+			err := b.ensureFileIsOpen(action.page)
 			if err != nil {
 				return false, err
 			}
 
-			b := make([]byte, pageSize)
-			_, err = sa.cache.pages[action.page].file.Write(b)
+			buf := make([]byte, pageSize)
+			_, err = b.cache.pages[action.page].file.Write(buf)
 			if err != nil {
 				return false, err
 			}
 		case deleteCache:
 			log.Printf("Deleting cache for page %d\n", action.page)
 
-			err := sa.ensureFileIsClosed(action.page)
+			err := b.ensureFileIsClosed(action.page)
 			if err != nil {
 				return false, err
 			}
@@ -199,7 +199,7 @@ func (sa *SiaAdapter) handleActions(actions []action) (bool, error) {
 			}
 
 			cachePath := asCachePath(action.page)
-			_, err = sa.httpClient.RenterDownloadFullGet(siaPath, cachePath, false)
+			_, err = b.httpClient.RenterDownloadFullGet(siaPath, cachePath, false)
 			if err != nil {
 				return false, err
 			}
@@ -212,7 +212,7 @@ func (sa *SiaAdapter) handleActions(actions []action) (bool, error) {
 			}
 
 			cachePath := asCachePath(action.page)
-			err = sa.httpClient.RenterUploadForcePost(
+			err = b.httpClient.RenterUploadForcePost(
 				cachePath, siaPath, defaultDataPieces, defaultParityPieces, true)
 			if err != nil {
 				return false, err
@@ -225,7 +225,7 @@ func (sa *SiaAdapter) handleActions(actions []action) (bool, error) {
 				return false, err
 			}
 
-			err = sa.httpClient.RenterDeletePost(siaPath)
+			err = b.httpClient.RenterDeletePost(siaPath)
 			if err != nil {
 				return false, err
 			}
@@ -239,19 +239,19 @@ func (sa *SiaAdapter) handleActions(actions []action) (bool, error) {
 	return false, nil
 }
 
-func (sa *SiaAdapter) maintenance() error {
-	sa.mutex.Lock()
-	defer sa.mutex.Unlock()
+func (b *Backend) maintenance() error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
 
-	actions := sa.cache.brain.maintenance(time.Now())
-	_, err := sa.handleActions(actions)
+	actions := b.cache.brain.maintenance(time.Now())
+	_, err := b.handleActions(actions)
 	if err != nil {
 		return err
 	}
 
 	anyUploading := false
-	for i := 0; i < sa.cache.brain.pageCount; i++ {
-		if sa.cache.brain.pages[i].state == cachedUploading {
+	for i := 0; i < b.cache.brain.pageCount; i++ {
+		if b.cache.brain.pages[i].state == cachedUploading {
 			anyUploading = true
 			break
 		}
@@ -261,30 +261,30 @@ func (sa *SiaAdapter) maintenance() error {
 		return nil
 	}
 
-	uploadedPages, err := getUploadedPages(sa.httpClient, true)
+	uploadedPages, err := getUploadedPages(b.httpClient, true)
 	if err != nil {
 		return err
 	}
 
 	for _, page := range uploadedPages {
-		if sa.cache.brain.pages[page].state == cachedUploading {
+		if b.cache.brain.pages[page].state == cachedUploading {
 			log.Printf("Upload complete for page %d\n", page)
-			sa.cache.brain.pages[page].state = cachedUnchanged
+			b.cache.brain.pages[page].state = cachedUnchanged
 		}
 	}
 
 	return nil
 }
 
-func (sa *SiaAdapter) ReadAt(b []byte, offset int64) (int, error) {
-	sa.mutex.Lock()
-	defer sa.mutex.Unlock()
+func (b *Backend) ReadAt(buf []byte, offset int64) (int, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
 
 	n := 0
-	for _, pageAccess := range determinePages(offset, len(b)) {
+	for _, pageAccess := range determinePages(offset, len(buf)) {
 		for {
-			actions := sa.cache.brain.prepareAccess(pageAccess.page, false, time.Now())
-			retry, err := sa.handleActions(actions)
+			actions := b.cache.brain.prepareAccess(pageAccess.page, false, time.Now())
+			retry, err := b.handleActions(actions)
 			if err != nil {
 				return n, err
 			}
@@ -292,19 +292,19 @@ func (sa *SiaAdapter) ReadAt(b []byte, offset int64) (int, error) {
 			if !retry {
 				break
 			} else {
-				sa.mutex.Unlock()
+				b.mutex.Unlock()
 				time.Sleep(waitInterval)
-				sa.mutex.Lock()
+				b.mutex.Lock()
 			}
 		}
 
-		err := sa.ensureFileIsOpen(pageAccess.page)
+		err := b.ensureFileIsOpen(pageAccess.page)
 		if err != nil {
 			return n, err
 		}
 
-		partialN, err := sa.cache.pages[pageAccess.page].file.ReadAt(
-			b[pageAccess.sliceLow:pageAccess.sliceHigh], pageAccess.offset)
+		partialN, err := b.cache.pages[pageAccess.page].file.ReadAt(
+			buf[pageAccess.sliceLow:pageAccess.sliceHigh], pageAccess.offset)
 		n += partialN
 		if err != nil {
 			return n, err
@@ -313,25 +313,25 @@ func (sa *SiaAdapter) ReadAt(b []byte, offset int64) (int, error) {
 	return n, nil
 }
 
-func (sa *SiaAdapter) WriteAt(b []byte, offset int64) (int, error) {
-	sa.mutex.Lock()
-	defer sa.mutex.Unlock()
+func (b *Backend) WriteAt(buf []byte, offset int64) (int, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
 
-	writeThrottleLevel := sa.cache.brain.cacheCount - (sa.cache.brain.softMaxCached + maxConcurrentUploads)
+	writeThrottleLevel := b.cache.brain.cacheCount - (b.cache.brain.softMaxCached + maxConcurrentUploads)
 	if writeThrottleLevel >= 0 {
 		writeThrottleMultiplier := int64(math.Pow(2, float64(writeThrottleLevel)))
 		writeThrottleDuration := time.Duration(writeThrottleMultiplier * int64(writeThrottleInterval))
 
-		sa.mutex.Unlock()
+		b.mutex.Unlock()
 		time.Sleep(writeThrottleDuration)
-		sa.mutex.Lock()
+		b.mutex.Lock()
 	}
 
 	n := 0
-	for _, pageAccess := range determinePages(offset, len(b)) {
+	for _, pageAccess := range determinePages(offset, len(buf)) {
 		for {
-			actions := sa.cache.brain.prepareAccess(pageAccess.page, true, time.Now())
-			retry, err := sa.handleActions(actions)
+			actions := b.cache.brain.prepareAccess(pageAccess.page, true, time.Now())
+			retry, err := b.handleActions(actions)
 			if err != nil {
 				return n, err
 			}
@@ -339,19 +339,19 @@ func (sa *SiaAdapter) WriteAt(b []byte, offset int64) (int, error) {
 			if !retry {
 				break
 			} else {
-				sa.mutex.Unlock()
+				b.mutex.Unlock()
 				time.Sleep(waitInterval)
-				sa.mutex.Lock()
+				b.mutex.Lock()
 			}
 		}
 
-		err := sa.ensureFileIsOpen(pageAccess.page)
+		err := b.ensureFileIsOpen(pageAccess.page)
 		if err != nil {
 			return n, err
 		}
 
-		partialN, err := sa.cache.pages[pageAccess.page].file.WriteAt(
-			b[pageAccess.sliceLow:pageAccess.sliceHigh], pageAccess.offset)
+		partialN, err := b.cache.pages[pageAccess.page].file.WriteAt(
+			buf[pageAccess.sliceLow:pageAccess.sliceHigh], pageAccess.offset)
 		n += partialN
 		if err != nil {
 			return n, err
@@ -360,14 +360,14 @@ func (sa *SiaAdapter) WriteAt(b []byte, offset int64) (int, error) {
 	return n, nil
 }
 
-func (sa *SiaAdapter) Close() error {
-	sa.mutex.Lock()
-	defer sa.mutex.Unlock()
+func (b *Backend) Close() error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
 
 	log.Printf("Shutting down\n")
 	for {
-		actions := sa.cache.brain.prepareShutdown()
-		retry, err := sa.handleActions(actions)
+		actions := b.cache.brain.prepareShutdown()
+		retry, err := b.handleActions(actions)
 		if err != nil {
 			return err
 		}
@@ -375,9 +375,9 @@ func (sa *SiaAdapter) Close() error {
 		if !retry {
 			break
 		} else {
-			sa.mutex.Unlock()
+			b.mutex.Unlock()
 			time.Sleep(waitInterval)
-			sa.mutex.Lock()
+			b.mutex.Lock()
 		}
 	}
 

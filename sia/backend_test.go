@@ -1,4 +1,4 @@
-package siaadapter
+package sia
 
 import (
 	"testing"
