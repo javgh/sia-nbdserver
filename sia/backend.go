@@ -105,8 +105,13 @@ func NewBackend(size uint64) (*Backend, error) {
 	}
 
 	cachedPages := getCachedPages(int(pageCount))
+	actions := []action{}
 	for _, page := range cachedPages {
 		log.Printf("Cache for page %d found - assuming it may contain new data\n", page)
+		actions = append(actions, action{
+			actionType: openFile,
+			page:       page,
+		})
 		cache.brain.pages[page].state = cachedChanged
 		cache.brain.cacheCount += 1
 	}
@@ -115,6 +120,11 @@ func NewBackend(size uint64) (*Backend, error) {
 		mutex:      &sync.Mutex{},
 		cache:      &cache,
 		httpClient: &httpClient,
+	}
+
+	_, err = backend.handleActions(actions)
+	if err != nil {
+		return nil, err
 	}
 
 	go func() {
@@ -127,60 +137,22 @@ func NewBackend(size uint64) (*Backend, error) {
 	return &backend, nil
 }
 
-func (b *Backend) ensureFileIsOpen(page page) error {
-	if b.cache.pages[page].file != nil {
-		return nil
-	}
-
-	file, err := os.OpenFile(asCachePath(page), os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
-		return err
-	}
-
-	b.cache.pages[page].file = file
-	return nil
-}
-
-func (b *Backend) ensureFileIsClosed(page page) error {
-	if b.cache.pages[page].file == nil {
-		return nil
-	}
-
-	err := b.cache.pages[page].file.Close()
-	if err != nil {
-		return err
-	}
-
-	b.cache.pages[page].file = nil
-	return nil
-}
-
 func (b *Backend) handleActions(actions []action) (bool, error) {
 	for _, action := range actions {
 		switch action.actionType {
 		case zeroCache:
 			log.Printf("Initializing cache for page %d with zeroes\n", action.page)
 
-			err := b.ensureFileIsOpen(action.page)
-			if err != nil {
-				return false, err
-			}
-
 			buf := make([]byte, pageSize)
-			_, err = b.cache.pages[action.page].file.Write(buf)
+			_, err := b.cache.pages[action.page].file.Write(buf)
 			if err != nil {
 				return false, err
 			}
 		case deleteCache:
 			log.Printf("Deleting cache for page %d\n", action.page)
 
-			err := b.ensureFileIsClosed(action.page)
-			if err != nil {
-				return false, err
-			}
-
 			cachePath := asCachePath(action.page)
-			err = os.Remove(cachePath)
+			err := os.Remove(cachePath)
 			if err != nil {
 				return false, err
 			}
@@ -223,6 +195,28 @@ func (b *Backend) handleActions(actions []action) (bool, error) {
 			if err != nil {
 				return false, err
 			}
+		case openFile:
+			if b.cache.pages[action.page].file != nil {
+				panic("file handling is inconsistent")
+			}
+
+			file, err := os.OpenFile(asCachePath(action.page), os.O_RDWR|os.O_CREATE, 0600)
+			if err != nil {
+				return false, err
+			}
+
+			b.cache.pages[action.page].file = file
+		case closeFile:
+			if b.cache.pages[action.page].file == nil {
+				panic("file handling is inconsistent")
+			}
+
+			err := b.cache.pages[action.page].file.Close()
+			if err != nil {
+				return false, err
+			}
+
+			b.cache.pages[action.page].file = nil
 		case waitAndRetry:
 			return true, nil
 		default:
@@ -292,11 +286,6 @@ func (b *Backend) ReadAt(buf []byte, offset int64) (int, error) {
 			}
 		}
 
-		err := b.ensureFileIsOpen(pageAccess.page)
-		if err != nil {
-			return n, err
-		}
-
 		partialN, err := b.cache.pages[pageAccess.page].file.ReadAt(
 			buf[pageAccess.sliceLow:pageAccess.sliceHigh], pageAccess.offset)
 		n += partialN
@@ -337,11 +326,6 @@ func (b *Backend) WriteAt(buf []byte, offset int64) (int, error) {
 				time.Sleep(waitInterval)
 				b.mutex.Lock()
 			}
-		}
-
-		err := b.ensureFileIsOpen(pageAccess.page)
-		if err != nil {
-			return n, err
 		}
 
 		partialN, err := b.cache.pages[pageAccess.page].file.WriteAt(

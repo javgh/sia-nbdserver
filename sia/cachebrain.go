@@ -56,6 +56,8 @@ const (
 	download
 	startUpload
 	postponeUpload
+	openFile
+	closeFile
 	waitAndRetry
 )
 
@@ -110,6 +112,10 @@ func (cb *cacheBrain) maintenance(now time.Time) []action {
 		case cachedUnchanged:
 			if softLimitReached {
 				actions = append(actions, action{
+					actionType: closeFile,
+					page:       access.page,
+				})
+				actions = append(actions, action{
 					actionType: deleteCache,
 					page:       access.page,
 				})
@@ -150,6 +156,10 @@ func (cb *cacheBrain) prepareAccess(page page, isWrite bool, now time.Time) []ac
 	switch cb.pages[page].state {
 	case zero:
 		actions = append(actions, action{
+			actionType: openFile,
+			page:       page,
+		})
+		actions = append(actions, action{
 			actionType: zeroCache,
 			page:       page,
 		})
@@ -158,6 +168,10 @@ func (cb *cacheBrain) prepareAccess(page page, isWrite bool, now time.Time) []ac
 	case notCached:
 		actions = append(actions, action{
 			actionType: download,
+			page:       page,
+		})
+		actions = append(actions, action{
+			actionType: openFile,
 			page:       page,
 		})
 		if isWrite {
@@ -194,6 +208,10 @@ func (cb *cacheBrain) prepareShutdown() []action {
 	for i := 0; i < cb.pageCount; i++ {
 		switch cb.pages[i].state {
 		case cachedUnchanged:
+			actions = append(actions, action{
+				actionType: closeFile,
+				page:       page(i),
+			})
 			actions = append(actions, action{
 				actionType: deleteCache,
 				page:       page(i),
