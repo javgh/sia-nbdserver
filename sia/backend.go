@@ -51,6 +51,7 @@ const (
 	defaultParityPieces   = 20
 	minimumRedundancy     = 2.5
 	writeThrottleInterval = 5 * time.Millisecond
+	writeThrottleLeeway   = 5
 	useCachedRenterInfo   = true
 )
 
@@ -300,7 +301,7 @@ func (b *Backend) WriteAt(buf []byte, offset int64) (int, error) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	writeThrottleLevel := b.cache.brain.cacheCount - (b.cache.brain.softMaxCached + maxConcurrentUploads)
+	writeThrottleLevel := b.cache.brain.cacheCount - (b.cache.brain.softMaxCached + writeThrottleLeeway)
 	if writeThrottleLevel >= 0 {
 		writeThrottleMultiplier := int64(math.Pow(2, float64(writeThrottleLevel)))
 		writeThrottleDuration := time.Duration(writeThrottleMultiplier * int64(writeThrottleInterval))

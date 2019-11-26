@@ -39,10 +39,6 @@ type (
 )
 
 const (
-	maxConcurrentUploads = 3
-)
-
-const (
 	zero state = iota
 	notCached
 	cachedUnchanged
@@ -104,13 +100,14 @@ func (cb *cacheBrain) maintenance(now time.Time) []action {
 	})
 
 	for i, access := range accesses {
-		softLimitReached := cb.cacheCount >= cb.softMaxCached
+		// Define recent activity as being in the youngest 1/3 of the cache.
+		hasRecentActivity := i > ((cb.softMaxCached * 2) / 3)
 		isIdle := now.After(access.lastAccess.Add(cb.idleInterval))
-		hasRoomForUpload := uploadingCount < maxConcurrentUploads
+		softLimitReached := cb.cacheCount >= cb.softMaxCached
 
 		switch cb.pages[access.page].state {
 		case cachedUnchanged:
-			if softLimitReached {
+			if softLimitReached && !hasRecentActivity {
 				actions = append(actions, action{
 					actionType: closeFile,
 					page:       access.page,
@@ -123,7 +120,7 @@ func (cb *cacheBrain) maintenance(now time.Time) []action {
 				cb.cacheCount -= 1
 			}
 		case cachedChanged:
-			if hasRoomForUpload && (softLimitReached || isIdle) {
+			if (softLimitReached && !hasRecentActivity) || isIdle {
 				actions = append(actions, action{
 					actionType: startUpload,
 					page:       access.page,
@@ -131,11 +128,6 @@ func (cb *cacheBrain) maintenance(now time.Time) []action {
 				cb.pages[access.page].state = cachedUploading
 				uploadingCount += 1
 			}
-		}
-
-		// limit maintenance activity to oldest part of the cache
-		if i >= 2*maxConcurrentUploads {
-			break
 		}
 	}
 

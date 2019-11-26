@@ -53,8 +53,9 @@ func TestMaintenanceB(t *testing.T) {
 	cacheBrain.cacheCount = 1
 
 	actions := cacheBrain.maintenance(now)
-	assert.Equal(t, 1, len(actions), "expected action when soft limit is hit")
-	assert.Equal(t, deleteCache, actions[0].actionType, "expected delete action")
+	assert.Equal(t, 2, len(actions), "expected action when soft limit is hit")
+	assert.Equal(t, closeFile, actions[0].actionType, "expected close file action")
+	assert.Equal(t, deleteCache, actions[1].actionType, "expected delete action")
 	assert.Equal(t, 0, cacheBrain.cacheCount, "expected cache count to be adjusted")
 	assert.Equal(t, notCached, cacheBrain.pages[2].state, "expected state change")
 
@@ -72,32 +73,33 @@ func TestMaintenanceB(t *testing.T) {
 }
 
 func TestMaintenanceC(t *testing.T) {
-	cacheBrain, err := newCacheBrain(10, 6, 4, 30*time.Second)
+	cacheBrain, err := newCacheBrain(20, 10, 9, 90*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	now := time.Now()
-	for i := 0; i < 5; i++ {
-		cacheBrain.pages[i+1].lastAccess = now
-		cacheBrain.pages[i+1].state = cachedChanged
+	for i := 0; i < 9; i++ {
+		cacheBrain.pages[i].lastAccess = now.Add(time.Duration(i * int(time.Second)))
+		cacheBrain.pages[i].state = cachedChanged
 	}
-	cacheBrain.cacheCount = 5
+	cacheBrain.cacheCount = 9
+
+	cacheBrain.pages[6].state = cachedUnchanged
+	cacheBrain.pages[8].state = cachedUnchanged
 
 	actions := cacheBrain.maintenance(now.Add(time.Minute))
-	assert.Equal(t, 3, len(actions), "expected only three actions because of upload limit")
-	for _, action := range actions {
-		assert.Equal(t, startUpload, action.actionType, "expected upload action")
-		assert.Equal(t, cachedUploading, cacheBrain.pages[action.page].state, "expected state change")
+	assert.Equal(t, 8, len(actions))
+
+	for i := 0; i < 6; i++ {
+		assert.Equal(t, startUpload, actions[i].actionType)
+		assert.Equal(t, page(i), actions[i].page)
 	}
 
-	cacheBrain.pages[actions[0].page].state = cachedChanged
-	actions = cacheBrain.maintenance(now.Add(time.Minute))
-	assert.Equal(t, 1, len(actions), "expected additional action after upload completes")
-	assert.Equal(t, startUpload, actions[0].actionType, "expected upload action")
-
-	actions = cacheBrain.maintenance(now.Add(time.Minute))
-	assert.Empty(t, actions, "should not trigger uploads again")
+	assert.Equal(t, closeFile, actions[6].actionType)
+	assert.Equal(t, page(6), actions[6].page)
+	assert.Equal(t, deleteCache, actions[7].actionType)
+	assert.Equal(t, page(6), actions[7].page)
 }
 
 func TestMaintenanceD(t *testing.T) {
@@ -122,8 +124,9 @@ func TestMaintenanceD(t *testing.T) {
 	cacheBrain.cacheCount = 4
 
 	actions := cacheBrain.maintenance(now.Add(4 * time.Second))
-	assert.Equal(t, 1, len(actions), "expected action when soft limit is hit")
-	assert.Equal(t, deleteCache, actions[0].actionType, "expected delete action")
+	assert.Equal(t, 2, len(actions), "expected action when soft limit is hit")
+	assert.Equal(t, closeFile, actions[0].actionType, "expected close file action")
+	assert.Equal(t, deleteCache, actions[1].actionType, "expected delete action")
 	assert.Equal(t, page(2), actions[0].page, "expected oldest page to be deleted first")
 }
 
@@ -159,15 +162,17 @@ func TestPrepareAccessA(t *testing.T) {
 
 	cacheBrain.pages[2].state = zero
 	actions := cacheBrain.prepareAccess(page(2), false, now)
-	assert.Equal(t, 1, len(actions))
-	assert.Equal(t, zeroCache, actions[0].actionType)
+	assert.Equal(t, 2, len(actions))
+	assert.Equal(t, openFile, actions[0].actionType)
+	assert.Equal(t, zeroCache, actions[1].actionType)
 	assert.Equal(t, cachedChanged, cacheBrain.pages[2].state)
 	assert.Equal(t, 1, cacheBrain.cacheCount)
 
 	cacheBrain.pages[1].state = notCached
 	actions = cacheBrain.prepareAccess(page(1), false, now.Add(time.Second))
-	assert.Equal(t, 1, len(actions))
+	assert.Equal(t, 2, len(actions))
 	assert.Equal(t, download, actions[0].actionType)
+	assert.Equal(t, openFile, actions[1].actionType)
 	assert.Equal(t, cachedUnchanged, cacheBrain.pages[1].state)
 	assert.Equal(t, 2, cacheBrain.cacheCount)
 
@@ -177,17 +182,22 @@ func TestPrepareAccessA(t *testing.T) {
 	assert.Equal(t, waitAndRetry, actions[0].actionType)
 
 	actions = cacheBrain.maintenance(now.Add(3 * time.Second))
-	assert.Equal(t, 2, len(actions))
+	assert.Equal(t, 1, len(actions))
 	assert.Equal(t, startUpload, actions[0].actionType)
 	assert.Equal(t, cachedUploading, cacheBrain.pages[2].state)
-	assert.Equal(t, deleteCache, actions[1].actionType)
-	assert.Equal(t, notCached, cacheBrain.pages[1].state)
-	assert.Equal(t, 1, cacheBrain.cacheCount)
+	assert.Equal(t, 2, cacheBrain.cacheCount)
 
 	cacheBrain.pages[2].state = cachedUnchanged
+	actions = cacheBrain.maintenance(now.Add(3 * time.Second))
+	assert.Equal(t, 2, len(actions))
+	assert.Equal(t, closeFile, actions[0].actionType)
+	assert.Equal(t, deleteCache, actions[1].actionType)
+	assert.Equal(t, 1, cacheBrain.cacheCount)
+
 	actions = cacheBrain.prepareAccess(page(0), true, now.Add(4*time.Second))
-	assert.Equal(t, 1, len(actions))
+	assert.Equal(t, 2, len(actions))
 	assert.Equal(t, download, actions[0].actionType)
+	assert.Equal(t, openFile, actions[1].actionType)
 	assert.Equal(t, cachedChanged, cacheBrain.pages[0].state)
 	assert.Equal(t, 2, cacheBrain.cacheCount)
 }
@@ -234,8 +244,9 @@ func TestPrepareShutdown(t *testing.T) {
 	cacheBrain.cacheCount = 1
 
 	actions = cacheBrain.prepareShutdown()
-	assert.Equal(t, 1, len(actions))
-	assert.Equal(t, deleteCache, actions[0].actionType)
+	assert.Equal(t, 2, len(actions))
+	assert.Equal(t, closeFile, actions[0].actionType)
+	assert.Equal(t, deleteCache, actions[1].actionType)
 	assert.Equal(t, notCached, cacheBrain.pages[2].state)
 	assert.Equal(t, 0, cacheBrain.cacheCount)
 
