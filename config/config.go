@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"io/ioutil"
 	"log"
 	"os"
@@ -18,8 +19,9 @@ func PrependHomeDirectory(path string) string {
 }
 
 func PrependDataDirectory(path string) string {
-	if os.Getenv("XDG_DATA_HOME") != "" {
-		return filepath.Join(os.Getenv("XDG_DATA_HOME"), "sia-nbdserver", path)
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if dataHome != "" {
+		return filepath.Join(dataHome, "sia-nbdserver", path)
 	}
 
 	currentUser, err := user.Current()
@@ -28,6 +30,15 @@ func PrependDataDirectory(path string) string {
 	}
 
 	return filepath.Join(currentUser.HomeDir, ".local/share/sia-nbdserver", path)
+}
+
+func GetSocketPath() (string, error) {
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	if runtimeDir == "" {
+		return "", errors.New("$XDG_RUNTIME_DIR not set")
+	}
+
+	return filepath.Join(runtimeDir, "sia-nbdserver"), nil
 }
 
 func ReadPasswordFile(path string) (string, error) {

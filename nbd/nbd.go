@@ -323,29 +323,34 @@ func handle(conn net.Conn, exportSize uint64, backend Backend) error {
 	return nil
 }
 
-func Playground(backend Backend) {
-	ln, err := net.Listen("unix", "/tmp/playground")
+func Serve(socketPath string, backend Backend) error {
+	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+	log.Printf("Server listens at %s - connect with:\n", socketPath)
+	log.Printf("  # modprobe nbd\n")
+	log.Printf("  # nbd-client -b 4096 -u %s /dev/nbd0\n", socketPath)
 
 	conn, err := ln.Accept()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	err = handle(conn, 1099511627776, backend)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	err = conn.Close()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	err = ln.Close()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+
+	return nil
 }

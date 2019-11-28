@@ -22,6 +22,15 @@ type (
 		httpClient *client.Client
 	}
 
+	BackendSettings struct {
+		Size             uint64
+		HardMaxCached    int
+		SoftMaxCached    int
+		IdleInterval     time.Duration
+		SiaDaemonAddress string
+		SiaPasswordFile  string
+	}
+
 	pageAccess struct {
 		page      page
 		offset    int64
@@ -42,10 +51,8 @@ type (
 )
 
 const (
+	siaPathPrefix         = "nbd"
 	pageSize              = 64 * 1024 * 1024
-	defaultHardMaxCached  = 192
-	defaultSoftMaxCached  = 176
-	defaultIdleInterval   = 30 * time.Second
 	waitInterval          = 5 * time.Second
 	defaultDataPieces     = 10
 	defaultParityPieces   = 20
@@ -55,13 +62,7 @@ const (
 	useCachedRenterInfo   = true
 )
 
-var (
-	siaDaemonAddress = "localhost:9980"
-	siaPasswordFile  = config.PrependHomeDirectory(".sia/apipassword")
-	siaPathPrefix    = "nbd"
-)
-
-func NewBackend(size uint64) (*Backend, error) {
+func NewBackend(settings BackendSettings) (*Backend, error) {
 	dataDirectory := config.PrependDataDirectory("")
 	log.Printf("Storing cache in %s\n", dataDirectory)
 	err := os.MkdirAll(dataDirectory, 0700)
@@ -69,13 +70,13 @@ func NewBackend(size uint64) (*Backend, error) {
 		return nil, err
 	}
 
-	pageCount := size / pageSize
-	if size%pageSize > 0 {
+	pageCount := settings.Size / pageSize
+	if settings.Size%pageSize > 0 {
 		pageCount += 1
 	}
 
-	cacheBrain, err :=
-		newCacheBrain(int(pageCount), defaultHardMaxCached, defaultSoftMaxCached, defaultIdleInterval)
+	cacheBrain, err := newCacheBrain(
+		int(pageCount), settings.HardMaxCached, settings.SoftMaxCached, settings.IdleInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -86,13 +87,13 @@ func NewBackend(size uint64) (*Backend, error) {
 		pages:     make([]pageIODetails, pageCount),
 	}
 
-	siaPassword, err := config.ReadPasswordFile(siaPasswordFile)
+	siaPassword, err := config.ReadPasswordFile(settings.SiaPasswordFile)
 	if err != nil {
 		return nil, err
 	}
 
 	httpClient := client.Client{
-		Address:  siaDaemonAddress,
+		Address:  settings.SiaDaemonAddress,
 		Password: siaPassword,
 	}
 
