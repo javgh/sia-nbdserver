@@ -194,7 +194,7 @@ func (cb *cacheBrain) prepareAccess(page page, isWrite bool, now time.Time) []ac
 	return actions
 }
 
-func (cb *cacheBrain) prepareShutdown() []action {
+func (cb *cacheBrain) prepareShutdown(thorough bool) []action {
 	actions := []action{}
 
 	for i := 0; i < cb.pageCount; i++ {
@@ -211,15 +211,25 @@ func (cb *cacheBrain) prepareShutdown() []action {
 			cb.pages[i].state = notCached
 			cb.cacheCount -= 1
 		case cachedChanged:
-			actions = append(actions, action{
-				actionType: startUpload,
-				page:       page(i),
-			})
-			cb.pages[i].state = cachedUploading
+			if thorough {
+				actions = append(actions, action{
+					actionType: startUpload,
+					page:       page(i),
+				})
+				cb.pages[i].state = cachedUploading
+			}
+		case cachedUploading:
+			if !thorough {
+				actions = append(actions, action{
+					actionType: postponeUpload,
+					page:       page(i),
+				})
+				cb.pages[i].state = cachedChanged
+			}
 		}
 	}
 
-	if cb.cacheCount > 0 {
+	if thorough && cb.cacheCount > 0 {
 		actions = append(actions, action{
 			actionType: waitAndRetry,
 		})

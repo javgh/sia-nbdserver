@@ -6,10 +6,12 @@ import (
 	"io"
 	"log"
 	"net"
+	"time"
 )
 
 type (
 	Backend interface {
+		Available() bool
 		ReadAt(buf []byte, offset int64) (int, error)
 		WriteAt(buf []byte, offset int64) (int, error)
 	}
@@ -88,7 +90,8 @@ const (
 	maxOptionLength  = 65536
 	maxRequestLength = 268435456
 
-	exportName = "sia"
+	exportName        = "sia"
+	interruptInterval = 2 * time.Second
 )
 
 func handle(conn net.Conn, exportSize uint64, backend Backend) error {
@@ -323,8 +326,13 @@ func handle(conn net.Conn, exportSize uint64, backend Backend) error {
 	return nil
 }
 
-func Serve(socketPath string, backend Backend) error {
-	ln, err := net.Listen("unix", socketPath)
+func Serve(socketPath string, exportSize uint64, backend Backend) error {
+	unixAddr, err := net.ResolveUnixAddr("unix", socketPath)
+	if err != nil {
+		return err
+	}
+
+	ln, err := net.ListenUnix("unix", unixAddr)
 	if err != nil {
 		return err
 	}
@@ -332,19 +340,29 @@ func Serve(socketPath string, backend Backend) error {
 	log.Printf("  # modprobe nbd\n")
 	log.Printf("  # nbd-client -b 4096 -u %s /dev/nbd0\n", socketPath)
 
-	conn, err := ln.Accept()
-	if err != nil {
-		return err
-	}
+	for backend.Available() {
+		// Wake up from Accept() periodically to
+		// check if we need to shutdown the server.
+		ln.SetDeadline(time.Now().Add(interruptInterval))
+		conn, err := ln.Accept()
+		if err != nil {
+			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
+				continue
+			}
+			return err
+		}
+		log.Printf("Client connected")
 
-	err = handle(conn, 1099511627776, backend)
-	if err != nil {
-		return err
-	}
+		err = handle(conn, exportSize, backend)
+		if err != nil {
+			return err
+		}
 
-	err = conn.Close()
-	if err != nil {
-		return err
+		err = conn.Close()
+		if err != nil {
+			return err
+		}
+		log.Printf("Client disconnected")
 	}
 
 	err = ln.Close()

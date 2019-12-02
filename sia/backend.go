@@ -1,6 +1,7 @@
 package sia
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -16,7 +17,10 @@ import (
 )
 
 type (
+	backendState int
+
 	Backend struct {
+		state      backendState
 		mutex      *sync.Mutex
 		cache      *cache
 		httpClient *client.Client
@@ -60,6 +64,12 @@ const (
 	writeThrottleInterval = 5 * time.Millisecond
 	writeThrottleLeeway   = 5
 	useCachedRenterInfo   = true
+)
+
+const (
+	available backendState = iota
+	shuttingDown
+	unavailable
 )
 
 func NewBackend(settings BackendSettings) (*Backend, error) {
@@ -109,7 +119,7 @@ func NewBackend(settings BackendSettings) (*Backend, error) {
 	cachedPages := getCachedPages(int(pageCount))
 	actions := []action{}
 	for _, page := range cachedPages {
-		log.Printf("Cache for page %d found - assuming it may contain new data\n", page)
+		log.Printf("Cache for page %d found - assuming it contains unsynced data\n", page)
 		actions = append(actions, action{
 			actionType: openFile,
 			page:       page,
@@ -119,6 +129,7 @@ func NewBackend(settings BackendSettings) (*Backend, error) {
 	}
 
 	backend := Backend{
+		state:      available,
 		mutex:      &sync.Mutex{},
 		cache:      &cache,
 		httpClient: &httpClient,
@@ -130,7 +141,7 @@ func NewBackend(settings BackendSettings) (*Backend, error) {
 	}
 
 	go func() {
-		for {
+		for !backend.unavailable() {
 			time.Sleep(waitInterval)
 			_ = backend.maintenance()
 		}
@@ -266,9 +277,27 @@ func (b *Backend) maintenance() error {
 	return nil
 }
 
+func (b *Backend) unavailable() bool {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	return b.state == unavailable
+}
+
+func (b *Backend) Available() bool {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	return b.state == available
+}
+
 func (b *Backend) ReadAt(buf []byte, offset int64) (int, error) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+
+	if b.state != available {
+		return 0, errors.New("backend is no longer available")
+	}
 
 	n := 0
 	for _, pageAccess := range determinePages(offset, len(buf)) {
@@ -301,6 +330,10 @@ func (b *Backend) ReadAt(buf []byte, offset int64) (int, error) {
 func (b *Backend) WriteAt(buf []byte, offset int64) (int, error) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+
+	if b.state != available {
+		return 0, errors.New("backend is no longer available")
+	}
 
 	writeThrottleLevel := b.cache.brain.cacheCount - (b.cache.brain.softMaxCached + writeThrottleLeeway)
 	if writeThrottleLevel >= 0 {
@@ -340,13 +373,13 @@ func (b *Backend) WriteAt(buf []byte, offset int64) (int, error) {
 	return n, nil
 }
 
-func (b *Backend) Close() error {
+func (b *Backend) Shutdown(thorough bool) error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	log.Printf("Shutting down\n")
+	b.state = shuttingDown
 	for {
-		actions := b.cache.brain.prepareShutdown()
+		actions := b.cache.brain.prepareShutdown(thorough)
 		retry, err := b.handleActions(actions)
 		if err != nil {
 			return err
@@ -361,7 +394,24 @@ func (b *Backend) Close() error {
 		}
 	}
 
+	cachedPages := getCachedPages(int(b.cache.brain.pageCount))
+	for _, page := range cachedPages {
+		log.Printf("Fast shutdown leaves unsynced changes in cache for page %d\n", page)
+	}
+
+	b.state = unavailable
 	return nil
+}
+
+func (b *Backend) Wait() {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	for b.state != unavailable {
+		b.mutex.Unlock()
+		time.Sleep(waitInterval)
+		b.mutex.Lock()
+	}
 }
 
 func getUploadedPages(httpClient *client.Client, checkRedundancy bool) ([]page, error) {

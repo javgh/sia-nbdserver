@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -22,16 +24,45 @@ const (
 	defaultSiaPasswordFileSuffix = ".sia/apipassword"
 )
 
-func serve(socketPath string, backendSettings sia.BackendSettings) {
+func installSignalHandlers(siaBackend *sia.Backend) {
+	c := make(chan os.Signal, 3)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
+
+	for {
+		sig := <-c
+		switch sig {
+		case syscall.SIGINT, syscall.SIGTERM:
+			log.Printf("Performing fast shutdown\n")
+			err := siaBackend.Shutdown(false)
+			if err != nil {
+				log.Fatal(err)
+			}
+		case syscall.SIGUSR1:
+			log.Printf("Performing thorough shutdown\n")
+			err := siaBackend.Shutdown(true)
+			if err != nil {
+				log.Fatal(err)
+			}
+		default:
+			panic("unexpected signal")
+		}
+	}
+}
+
+func serve(socketPath string, exportSize uint64, backendSettings sia.BackendSettings) {
 	siaBackend, err := sia.NewBackend(backendSettings)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = nbd.Serve(socketPath, siaBackend)
+	go installSignalHandlers(siaBackend)
+
+	err = nbd.Serve(socketPath, exportSize, siaBackend)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	siaBackend.Wait()
 }
 
 func main() {
@@ -63,7 +94,7 @@ func main() {
 				SiaDaemonAddress: siaDaemonAddress,
 				SiaPasswordFile:  siaPasswordFile,
 			}
-			serve(socketPath, backendSettings)
+			serve(socketPath, size, backendSettings)
 		},
 	}
 

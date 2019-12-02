@@ -229,13 +229,13 @@ func TestPrepareAccessB(t *testing.T) {
 	assert.Equal(t, 1, cacheBrain.cacheCount)
 }
 
-func TestPrepareShutdown(t *testing.T) {
+func TestPrepareFastShutdown(t *testing.T) {
 	cacheBrain, err := newCacheBrain(10, 6, 4, 30*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	actions := cacheBrain.prepareShutdown()
+	actions := cacheBrain.prepareShutdown(false)
 	assert.Empty(t, actions, "empty cache should shutdown right away")
 
 	now := time.Now()
@@ -243,7 +243,7 @@ func TestPrepareShutdown(t *testing.T) {
 	cacheBrain.pages[2].lastAccess = now
 	cacheBrain.cacheCount = 1
 
-	actions = cacheBrain.prepareShutdown()
+	actions = cacheBrain.prepareShutdown(false)
 	assert.Equal(t, 2, len(actions))
 	assert.Equal(t, closeFile, actions[0].actionType)
 	assert.Equal(t, deleteCache, actions[1].actionType)
@@ -252,9 +252,44 @@ func TestPrepareShutdown(t *testing.T) {
 
 	cacheBrain.pages[3].state = cachedChanged
 	cacheBrain.pages[3].lastAccess = now
+	cacheBrain.pages[4].state = cachedUploading
+	cacheBrain.pages[4].lastAccess = now
+	cacheBrain.cacheCount = 2
+
+	actions = cacheBrain.prepareShutdown(false)
+	assert.Equal(t, 1, len(actions))
+	assert.Equal(t, postponeUpload, actions[0].actionType)
+	assert.Equal(t, cachedChanged, cacheBrain.pages[4].state)
+}
+
+func TestPrepareThoroughShutdown(t *testing.T) {
+	cacheBrain, err := newCacheBrain(10, 6, 4, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	actions := cacheBrain.prepareShutdown(true)
+	assert.Empty(t, actions, "empty cache should shutdown right away")
+
+	now := time.Now()
+	cacheBrain.pages[2].state = cachedUnchanged
+	cacheBrain.pages[2].lastAccess = now
 	cacheBrain.cacheCount = 1
 
-	actions = cacheBrain.prepareShutdown()
+	actions = cacheBrain.prepareShutdown(true)
+	assert.Equal(t, 2, len(actions))
+	assert.Equal(t, closeFile, actions[0].actionType)
+	assert.Equal(t, deleteCache, actions[1].actionType)
+	assert.Equal(t, notCached, cacheBrain.pages[2].state)
+	assert.Equal(t, 0, cacheBrain.cacheCount)
+
+	cacheBrain.pages[3].state = cachedChanged
+	cacheBrain.pages[3].lastAccess = now
+	cacheBrain.pages[4].state = cachedUploading
+	cacheBrain.pages[4].lastAccess = now
+	cacheBrain.cacheCount = 2
+
+	actions = cacheBrain.prepareShutdown(true)
 	assert.Equal(t, 2, len(actions))
 	assert.Equal(t, startUpload, actions[0].actionType)
 	assert.Equal(t, cachedUploading, cacheBrain.pages[3].state)
