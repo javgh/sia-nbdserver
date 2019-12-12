@@ -17,8 +17,8 @@ import (
 
 const (
 	defaultSize                  = 1099511627776
-	defaultHardMaxCached         = 192
-	defaultSoftMaxCached         = 176
+	defaultHardMaxCached         = 96
+	defaultSoftMaxCached         = 64
 	defaultIdleIntervalSeconds   = 120
 	defaultSiaDaemonAddress      = "localhost:9980"
 	defaultSiaPasswordFileSuffix = ".sia/apipassword"
