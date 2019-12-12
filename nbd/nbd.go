@@ -355,14 +355,15 @@ func Serve(socketPath string, exportSize uint64, backend Backend) error {
 
 		err = handle(conn, exportSize, backend)
 		if err != nil {
-			return err
+			log.Printf("Client disconnected with error: %s", err)
+		} else {
+			log.Printf("Client disconnected")
 		}
 
 		err = conn.Close()
 		if err != nil {
 			return err
 		}
-		log.Printf("Client disconnected")
 	}
 
 	err = ln.Close()
