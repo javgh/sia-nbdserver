@@ -143,7 +143,10 @@ func NewBackend(settings BackendSettings) (*Backend, error) {
 	go func() {
 		for !backend.unavailable() {
 			time.Sleep(waitInterval)
-			_ = backend.maintenance()
+			err2 := backend.maintenance()
+			if err2 != nil {
+				log.Printf("Error while doing maintenance: %s", err2)
+			}
 		}
 	}()
 
