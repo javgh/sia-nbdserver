@@ -193,9 +193,12 @@ func (b *Backend) handleActions(actions []action) (bool, error) {
 				return false, err
 			}
 
+			// Workaround for force=true bug; delete the file, but ignore errors
+			_ = b.httpClient.RenterDeletePost(siaPath)
+
 			cachePath := asCachePath(action.page)
 			err = b.httpClient.RenterUploadForcePost(
-				cachePath, siaPath, defaultDataPieces, defaultParityPieces, true)
+				cachePath, siaPath, defaultDataPieces, defaultParityPieces, false)
 			if err != nil {
 				return false, err
 			}
