@@ -250,6 +250,10 @@ func (b *Backend) maintenance() error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
+	if b.state == unavailable {
+		return nil
+	}
+
 	actions := b.cache.brain.maintenance(time.Now())
 	_, err := b.handleActions(actions)
 	if err != nil {
