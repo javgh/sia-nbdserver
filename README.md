@@ -34,13 +34,13 @@ As root:
       sia-nbdserver [flags]
 
     Flags:
-      -H, --hard int                   hard limit for number of 64 MiB pages in the cache (default 96)
+      -H, --hard int                   hard limit for number of 64 MiB pages in the cache (default 128)
       -h, --help                       help for sia-nbdserver
       -i, --idle int                   seconds to wait before a cache page is marked idle and upload begins (default 120)
           --sia-daemon string          host and port of Sia daemon (default "localhost:9980")
           --sia-password-file string   path to Sia API password file (default "/home/jan/.sia/apipassword")
       -s, --size uint                  size of block device; should ideally be a multiple of 67108864 (2 ^ 26) (default 1099511627776)
-      -S, --soft int                   soft limit for number of 64 MiB pages in the cache (default 64)
+      -S, --soft int                   soft limit for number of 64 MiB pages in the cache (default 96)
       -u, --unix string                unix domain socket (default "/run/user/1000/sia-nbdserver")
 
 By default `sia-nbdserver` will export a block device with a size of 1 TiB. This
