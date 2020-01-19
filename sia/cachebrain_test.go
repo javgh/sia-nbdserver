@@ -229,6 +229,34 @@ func TestPrepareAccessB(t *testing.T) {
 	assert.Equal(t, 1, cacheBrain.cacheCount)
 }
 
+func TestAvoidFrequentPostponing(t *testing.T) {
+	cacheBrain, err := newCacheBrain(3, 2, 1, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+
+	cacheBrain.pages[2].state = cachedChanged
+	cacheBrain.pages[2].lastAccess = now
+	cacheBrain.cacheCount = 1
+
+	actions := cacheBrain.maintenance(now.Add(time.Minute))
+	assert.Equal(t, 1, len(actions))
+	assert.Equal(t, startUpload, actions[0].actionType)
+
+	actions = cacheBrain.prepareAccess(page(2), true, now.Add(2*time.Minute))
+	assert.Equal(t, 1, len(actions))
+	assert.Equal(t, postponeUpload, actions[0].actionType)
+
+	actions = cacheBrain.maintenance(now.Add(2 * time.Minute))
+	assert.Equal(t, 0, len(actions))
+
+	actions = cacheBrain.maintenance(now.Add(3 * time.Minute))
+	assert.Equal(t, 1, len(actions))
+	assert.Equal(t, startUpload, actions[0].actionType)
+}
+
 func TestPrepareFastShutdown(t *testing.T) {
 	cacheBrain, err := newCacheBrain(10, 6, 4, 30*time.Second)
 	if err != nil {

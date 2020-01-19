@@ -12,8 +12,9 @@ type (
 	page int
 
 	pageDetails struct {
-		state      state
-		lastAccess time.Time
+		state            state
+		lastAccess       time.Time
+		lastPostponement time.Time
 	}
 
 	lastAccessDetails struct {
@@ -103,6 +104,8 @@ func (cb *cacheBrain) maintenance(now time.Time) []action {
 		// Define recent activity as being in the youngest 1/3 of the cache.
 		hasRecentActivity := i > ((cb.softMaxCached * 2) / 3)
 		isIdle := now.After(access.lastAccess.Add(cb.idleInterval))
+		recentlyPostponed := now.Before(
+			cb.pages[access.page].lastPostponement.Add(cb.idleInterval))
 		softLimitReached := cb.cacheCount >= cb.softMaxCached
 
 		switch cb.pages[access.page].state {
@@ -120,7 +123,7 @@ func (cb *cacheBrain) maintenance(now time.Time) []action {
 				cb.cacheCount -= 1
 			}
 		case cachedChanged:
-			if (softLimitReached && !hasRecentActivity) || isIdle {
+			if ((softLimitReached && !hasRecentActivity) || isIdle) && !recentlyPostponed {
 				actions = append(actions, action{
 					actionType: startUpload,
 					page:       access.page,
@@ -185,6 +188,7 @@ func (cb *cacheBrain) prepareAccess(page page, isWrite bool, now time.Time) []ac
 				page:       page,
 			})
 			cb.pages[page].state = cachedChanged
+			cb.pages[page].lastPostponement = now
 		}
 	default:
 		panic("unknown state")
