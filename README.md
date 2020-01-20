@@ -9,10 +9,21 @@ This project implements an [NBD](https://nbd.sourceforge.io) server (almost
 to expose [Sia](https://sia.tech/) cloud storage in the form of a
 Linux block device `/dev/nbd0` in combination with a local cache.
 
+The Linux kernel module `nbd` provides a block device where every read and write
+operation is turned into a request to a (potentially remote) server. This
+project provides such a server - intended to be run locally, on the same
+machine - and serves the requests by reading and writing to the Sia network. In
+addition, a local cache is used to limit interaction with the Sia network and
+increase performance. "Screenshot":
+
+    $ df -h /dev/nbd0
+    Filesystem      Size  Used Avail Use% Mounted on
+    /dev/nbd0       1.0T   34G  990G   4% /mnt
+
 ## Quick Start
 
 You will need a running Sia node that has formed storage contracts and is ready
-to store data.
+to store data. Then:
 
     $ go get -u github.com/javgh/sia-nbdserver     # will - by default - install to ~/go/bin/
     $ sia-nbdserver
@@ -96,11 +107,15 @@ much, it can use up all available memory, which in turn prevents `siad`  from
 making any progress. Now the write cache can not get smaller and the system is
 stuck. To prevent this I pass `-o sync` to `xfs` to force it to directly flush
 all writes to the block device. This unfortunately impacts performance
-negatively, but seems to avoid the low memory situation. Another approach would
+negatively, but seems to avoid the low memory situation. A better approach is to
+use cgroups to limit memory for whatever application is using the block device,
+which will also limit the size of the filesystem cache. Yet another approach would
 be to have `nbd-client` and `sia-nbdserver` on two separate machines. This would
 require to first modify `sia-nbdserver` to support exporting over the network.
 
-In my testing (in December 2019) Sia sometimes makes no progress on uploads or
-downloads for several tens of minutes. This will then usually cause `nbd-client`
-to timeout. As a workaround I set a very high timeout value like 1 hour (3600 seconds)
-with `nbd-client -t 3600`.
+In my testing (in December 2019) previous versions of Sia would sometimes make no
+progress on uploads or downloads for several tens of minutes. This will then usually
+cause `nbd-client` to timeout. As a workaround I set a very high timeout value like
+1 hour (3600 seconds) with `nbd-client -t 3600`. This might not be necessary
+with a recent version of Sia, but I would still recommend to set a timeout of
+at least a few minutes.
