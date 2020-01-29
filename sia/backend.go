@@ -207,7 +207,7 @@ func (b *Backend) handleActions(actions []action) (bool, error) {
 				return false, err
 			}
 
-			err = b.httpClient.RenterDeletePost(siaPath)
+			err = b.httpClient.RenterFileDeletePost(siaPath)
 			if err != nil {
 				return false, err
 			}
