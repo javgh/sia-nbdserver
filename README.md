@@ -1,10 +1,6 @@
-[![Test suite status](https://github.com/javgh/sia-nbdserver/workflows/Test%20suite/badge.svg)](https://github.com/javgh/sia-nbdserver)
-
-**Please note: This is unfinished software and not ready for general usage.
-This is a pre-release made available to Nebulous Labs developers for testing
-purposes.**
-
 # sia-nbdserver
+
+[![Test suite status](https://github.com/javgh/sia-nbdserver/workflows/Test%20suite/badge.svg)](https://github.com/javgh/sia-nbdserver)
 
 This project implements an [NBD](https://nbd.sourceforge.io) server (almost
 [baseline](https://sourceforge.net/p/nbd/code/ci/master/tree/doc/proto.md#baseline))
