@@ -23,7 +23,9 @@ increase performance. "Screenshot":
 You will need a running Sia node that has formed storage contracts and is ready
 to store data. Then:
 
-    $ go get -u github.com/javgh/sia-nbdserver     # will - by default - install to ~/go/bin/
+    $ git clone https://github.com/javgh/sia-nbdserver.git
+    $ cd sia-nbdserver
+    $ go install            # will - by default - install to ~/go/bin/
     $ sia-nbdserver
 
 As root:
