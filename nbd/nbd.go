@@ -327,12 +327,12 @@ func handle(conn net.Conn, exportSize uint64, backend Backend) error {
 }
 
 func Serve(socketPath string, exportSize uint64, backend Backend) error {
-	unixAddr, err := net.ResolveUnixAddr("unix", socketPath)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", socketPath)
 	if err != nil {
 		return err
 	}
 
-	ln, err := net.ListenUnix("unix", unixAddr)
+	ln, err := net.ListenTCP("tcp", tcpAddr)
 	if err != nil {
 		return err
 	}
