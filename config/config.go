@@ -37,8 +37,6 @@ func GetSocketPath() (string, error) {
 	if runtimeDir == "" {
 		return "", errors.New("$XDG_RUNTIME_DIR not set")
 	}
-
-	return filepath.Join(runtimeDir, "sia-nbdserver"), nil
 }
 
 func ReadPasswordFile(path string) (string, error) {
