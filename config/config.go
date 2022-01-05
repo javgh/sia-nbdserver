@@ -37,6 +37,8 @@ func GetSocketPath() (string, error) {
 	if runtimeDir == "" {
 		return "", errors.New("$XDG_RUNTIME_DIR not set")
 	}
+	
+	return runtimeDir, nil
 }
 
 func ReadPasswordFile(path string) (string, error) {
